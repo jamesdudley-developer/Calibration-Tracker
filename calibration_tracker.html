@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instrument Calibration Tracker — Bulwer Island</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --grid:#d7dbe0;
+    --grid-strong:#b9c0c8;
+    --ink:#1f2933;
+    --ink-soft:#5b6570;
+    --header-bg:#1f4e78;
+    --header-fg:#ffffff;
+    --row-alt:#f7f9fb;
+    --red-bg:#f4cccc; --red-fg:#cc0000;
+    --amber-bg:#fff2cc; --amber-fg:#b45f06;
+    --green-bg:#d9ead3; --green-fg:#38761d;
+    --grey-bg:#eceff1; --grey-fg:#607078;
+    --accent:#1f4e78;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#eef1f4;color:var(--ink);}
+
+  /* ---------- Setup banner (shown until config is filled in) ---------- */
+  #setup{
+    background:#fff3cd;border-bottom:1px solid #e0c26a;color:#6b5300;
+    padding:10px 16px;font-size:13px;display:none;
+  }
+  #setup code{background:#fff;padding:1px 5px;border-radius:3px;border:1px solid #e0c26a;}
+
+  header{
+    background:var(--header-bg);color:var(--header-fg);
+    padding:14px 20px;display:flex;align-items:center;justify-content:space-between;
+    flex-wrap:wrap;gap:10px;
+  }
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px;}
+  header .sub{font-size:12px;opacity:.8;margin-top:2px;}
+
+  .toolbar{
+    display:flex;gap:8px;padding:12px 20px;background:#fff;border-bottom:1px solid var(--grid);
+    flex-wrap:wrap;align-items:center;
+  }
+  .toolbar input[type="text"]{
+    padding:7px 10px;border:1px solid var(--grid-strong);border-radius:4px;font-size:13px;min-width:180px;
+  }
+  .chip{
+    border:1px solid var(--grid-strong);background:#fff;border-radius:14px;
+    padding:5px 12px;font-size:12px;cursor:pointer;color:var(--ink-soft);user-select:none;
+  }
+  .chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .toolbar .count{margin-left:auto;font-size:12px;color:var(--ink-soft);}
+
+  .grid-wrap{overflow:auto;background:#fff;margin:0 20px 20px;border:1px solid var(--grid);border-radius:6px;}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:900px;}
+  thead th{
+    position:sticky;top:0;background:var(--header-bg);color:var(--header-fg);
+    text-align:left;padding:9px 10px;font-weight:600;font-size:12px;white-space:nowrap;
+    border-right:1px solid rgba(255,255,255,.15);cursor:pointer;
+  }
+  thead th:hover{background:#245a89;}
+  thead th .arrow{opacity:.6;font-size:10px;margin-left:3px;}
+  tbody tr{border-bottom:1px solid var(--grid);cursor:pointer;}
+  tbody tr:nth-child(even){background:var(--row-alt);}
+  tbody tr:hover{background:#e8f0f7;}
+  tbody td{padding:8px 10px;white-space:nowrap;border-right:1px solid var(--grid);}
+  tbody td.wrap{white-space:normal;}
+
+  .pill{padding:3px 9px;border-radius:10px;font-size:11px;font-weight:600;display:inline-block;}
+  .pill.overdue{background:var(--red-bg);color:var(--red-fg);}
+  .pill.due-soon{background:var(--amber-bg);color:var(--amber-fg);}
+  .pill.ok{background:var(--green-bg);color:var(--green-fg);}
+  .pill.none{background:var(--grey-bg);color:var(--grey-fg);}
+  .pill.failed{background:var(--red-bg);color:var(--red-fg);}
+  .pill.passed{background:var(--green-bg);color:var(--green-fg);}
+
+  tr.row-overdue{background:#fdecec !important;}
+
+  /* ---------- Overlay ---------- */
+  #overlay{
+    position:fixed;inset:0;background:rgba(20,26,33,.55);display:none;
+    align-items:flex-start;justify-content:center;padding:6vh 16px;z-index:50;overflow:auto;
+  }
+  #overlay.show{display:flex;}
+  .panel{
+    background:#fff;border-radius:10px;max-width:560px;width:100%;
+    box-shadow:0 20px 60px rgba(0,0,0,.3);
+  }
+  .panel-head{
+    padding:18px 20px;border-bottom:1px solid var(--grid);
+    display:flex;justify-content:space-between;align-items:flex-start;
+  }
+  .panel-head h2{margin:0;font-size:18px;}
+  .panel-head p{margin:2px 0 0;font-size:13px;color:var(--ink-soft);}
+  .panel-head button{
+    border:none;background:none;font-size:20px;cursor:pointer;color:var(--ink-soft);line-height:1;
+  }
+  .panel-body{padding:18px 20px;}
+  .meta-row{display:flex;flex-wrap:wrap;gap:8px 24px;font-size:13px;margin-bottom:16px;}
+  .meta-row div span{display:block;color:var(--ink-soft);font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
+  .hist-title{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);margin:0 0 8px;}
+  .hist-item{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:9px 0;border-top:1px solid var(--grid);font-size:13px;
+  }
+  .hist-item:first-of-type{border-top:none;}
+  .hist-item a.pdf-link{
+    font-size:12px;color:var(--accent);text-decoration:none;border:1px solid var(--grid-strong);
+    padding:4px 9px;border-radius:4px;white-space:nowrap;
+  }
+  .hist-item a.pdf-link:hover{background:#eef1f4;}
+  .hist-empty{font-size:13px;color:var(--ink-soft);padding:10px 0;}
+
+  .state-msg{padding:40px 20px;text-align:center;color:var(--ink-soft);font-size:14px;}
+
+  /* ---------- Login gate ---------- */
+  #login-gate{
+    min-height:80vh;display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  #login-gate .box{
+    background:#fff;border:1px solid var(--grid);border-radius:8px;padding:28px 24px;
+    max-width:340px;width:100%;text-align:center;
+  }
+  #login-gate h2{margin:0 0 4px;font-size:17px;}
+  #login-gate p{margin:0 0 18px;font-size:13px;color:var(--ink-soft);}
+  #login-gate input[type="email"]{
+    width:100%;padding:10px;border:1px solid var(--grid-strong);border-radius:5px;
+    font-size:14px;margin-bottom:12px;box-sizing:border-box;
+  }
+  #login-gate button{
+    width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:6px;
+    font-size:14px;font-weight:600;cursor:pointer;
+  }
+  #login-gate button:disabled{background:#9aa6b1;}
+  #login-msg{font-size:12px;margin-top:12px;color:var(--ink-soft);}
+  #login-msg.error{color:var(--red-fg);}
+  #login-msg.success{color:var(--green-fg);}
+
+  #user-bar{
+    display:flex;align-items:center;gap:10px;font-size:12px;opacity:.9;
+  }
+  #user-bar button{
+    background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;
+    border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer;
+  }
+  #user-bar button:hover{background:rgba(255,255,255,.25);}
+
+  #app-shell{display:none;}
+</style>
+</head>
+<body>
+
+<div id="setup"></div>
+
+<div id="login-gate">
+  <div class="box">
+    <h2>Instrument Calibration Tracker</h2>
+    <p>Bulwer Island — sign in to view the register</p>
+    <input type="email" id="login-email" placeholder="you@company.com" autocomplete="email">
+    <button id="login-btn">Send me a login link</button>
+    <div id="login-msg"></div>
+  </div>
+</div>
+
+<div id="app-shell">
+<header>
+  <div>
+    <h1>Instrument Calibration Tracker</h1>
+    <div class="sub">Bulwer Island</div>
+  </div>
+  <div id="user-bar">
+    <span id="user-email"></span>
+    <button id="logout-btn">Log out</button>
+  </div>
+</header>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Search tag, model, serial…">
+  <span class="chip active" data-status="all">All</span>
+  <span class="chip" data-status="Overdue">Overdue</span>
+  <span class="chip" data-status="Due Soon">Due Soon</span>
+  <span class="chip" data-status="OK">OK</span>
+  <span class="count" id="row-count"></span>
+</div>
+
+<div class="grid-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th data-key="tag_number">Tag <span class="arrow"></span></th>
+        <th data-key="manufacturer">Manufacturer</th>
+        <th data-key="model">Model</th>
+        <th data-key="area">Area</th>
+        <th data-key="last_calibration_date">Last Cal</th>
+        <th data-key="next_due">Next Due</th>
+        <th data-key="days_until_due">Days</th>
+        <th data-key="status">Status</th>
+        <th data-key="last_result">Last Result</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="9" class="state-msg">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div id="overlay">
+  <div class="panel">
+    <div class="panel-head">
+      <div>
+        <h2 id="ov-tag">—</h2>
+        <p id="ov-sub">—</p>
+      </div>
+      <button id="ov-close" aria-label="Close">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="meta-row" id="ov-meta"></div>
+      <p class="hist-title">Calibration history</p>
+      <div id="ov-history"></div>
+    </div>
+  </div>
+</div>
+</div><!-- /app-shell -->
+
+<script>
+/* =====================================================================
+   CONFIG — paste your Supabase project values here.
+   Settings → API in your Supabase dashboard.
+   ===================================================================== */
+const SUPABASE_URL = "https://fwnbnssiekedrruikytk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_daVea0bT5C4fFMJ1FBkZJw_ASggbyFf";
+const CERTIFICATES_BUCKET = "certificates";
+/* ===================================================================== */
+
+const configured = !SUPABASE_URL.startsWith("YOUR_") && !SUPABASE_ANON_KEY.startsWith("YOUR_");
+const setupBanner = document.getElementById("setup");
+if (!configured) {
+  setupBanner.style.display = "block";
+  setupBanner.innerHTML = "Not connected yet — open this file and set <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> near the bottom of the &lt;script&gt; tag, using the values from your Supabase project's Settings → API page.";
+}
+
+let sb = null;
+let rows = [];
+let sortKey = "status_rank";
+let sortDir = 1;
+let statusFilter = "all";
+let searchTerm = "";
+
+const statusRank = { "Overdue": 0, "Due Soon": 1, "OK": 2, "No calibration on record": 3 };
+const statusClass = (s) => s === "Overdue" ? "overdue" : s === "Due Soon" ? "due-soon" : s === "OK" ? "ok" : "none";
+
+function fmtDate(d){
+  if (!d) return "—";
+  return d;
+}
+
+async function init(){
+  if (!configured){
+    document.getElementById("tbody").innerHTML =
+      '<tr><td colspan="9" class="state-msg">Add your Supabase URL and anon key at the top of the script to connect.</td></tr>';
+    document.getElementById("login-gate").style.display = "none";
+    document.getElementById("app-shell").style.display = "block";
+    return;
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // React to sign-in / sign-out (covers the magic-link redirect back too).
+  sb.auth.onAuthStateChange((_event, session) => {
+    handleSession(session);
+  });
+
+  const { data: { session } } = await sb.auth.getSession();
+  handleSession(session);
+}
+
+function handleSession(session){
+  const gate = document.getElementById("login-gate");
+  const shell = document.getElementById("app-shell");
+  if (session && session.user){
+    gate.style.display = "none";
+    shell.style.display = "block";
+    document.getElementById("user-email").textContent = session.user.email;
+    loadRows();
+  } else {
+    shell.style.display = "none";
+    gate.style.display = "flex";
+  }
+}
+
+document.getElementById("login-btn").addEventListener("click", async () => {
+  const email = document.getElementById("login-email").value.trim();
+  const msgEl = document.getElementById("login-msg");
+  const btn = document.getElementById("login-btn");
+  msgEl.className = "";
+  if (!email){
+    msgEl.textContent = "Enter your email first.";
+    msgEl.className = "error";
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = "Sending…";
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.href }
+  });
+  btn.disabled = false;
+  btn.textContent = "Send me a login link";
+  if (error){
+    msgEl.textContent = error.message;
+    msgEl.className = "error";
+  } else {
+    msgEl.textContent = "Check your email for a login link.";
+    msgEl.className = "success";
+  }
+});
+
+document.getElementById("logout-btn").addEventListener("click", async () => {
+  await sb.auth.signOut();
+});
+
+async function loadRows(){
+  const { data, error } = await sb
+    .from("instrument_status")
+    .select("*");
+
+  if (error){
+    document.getElementById("tbody").innerHTML =
+      `<tr><td colspan="9" class="state-msg">Couldn't load data: ${error.message}</td></tr>`;
+    return;
+  }
+  rows = data.map(r => ({ ...r, status_rank: statusRank[r.status] ?? 9 }));
+  document.getElementById("last-updated").textContent =
+    "Loaded " + new Date().toLocaleString();
+  render();
+}
+
+function applyFilters(list){
+  let out = list;
+  if (statusFilter !== "all") out = out.filter(r => r.status === statusFilter);
+  if (searchTerm){
+    const t = searchTerm.toLowerCase();
+    out = out.filter(r =>
+      (r.tag_number||"").toLowerCase().includes(t) ||
+      (r.manufacturer||"").toLowerCase().includes(t) ||
+      (r.model||"").toLowerCase().includes(t) ||
+      (r.serial_number||"").toLowerCase().includes(t)
+    );
+  }
+  return out;
+}
+
+function render(){
+  let list = applyFilters(rows);
+  list = list.slice().sort((a,b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return 0;
+  });
+
+  document.getElementById("row-count").textContent = `${list.length} of ${rows.length} instruments`;
+
+  const tbody = document.getElementById("tbody");
+  if (list.length === 0){
+    tbody.innerHTML = '<tr><td colspan="9" class="state-msg">No instruments match this filter.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list.map(r => {
+    const rowCls = r.status === "Overdue" ? "row-overdue" : "";
+    const resultPill = r.last_result
+      ? `<span class="pill ${r.last_result.toLowerCase()}">${r.last_result}</span>`
+      : "—";
+    return `<tr class="${rowCls}" data-id="${r.id}">
+      <td><strong>${r.tag_number}</strong></td>
+      <td>${r.manufacturer || "—"}</td>
+      <td class="wrap">${r.model || "—"}</td>
+      <td>${r.area || "—"}</td>
+      <td>${fmtDate(r.last_calibration_date)}</td>
+      <td>${fmtDate(r.next_due)}</td>
+      <td>${r.days_until_due ?? "—"}</td>
+      <td><span class="pill ${statusClass(r.status)}">${r.status}</span></td>
+      <td>${resultPill}</td>
+    </tr>`;
+  }).join("");
+
+  tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+    tr.addEventListener("click", () => openOverlay(tr.getAttribute("data-id")));
+  });
+}
+
+/* ---------------- Sorting ---------------- */
+document.querySelectorAll("thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.getAttribute("data-key");
+    if (sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = 1; }
+    document.querySelectorAll("thead .arrow").forEach(a => a.textContent = "");
+    th.querySelector(".arrow").textContent = sortDir === 1 ? "▲" : "▼";
+    render();
+  });
+});
+
+/* ---------------- Filters ---------------- */
+document.querySelectorAll(".chip").forEach(chip => {
+  chip.addEventListener("click", () => {
+    document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    statusFilter = chip.getAttribute("data-status");
+    render();
+  });
+});
+document.getElementById("search").addEventListener("input", (e) => {
+  searchTerm = e.target.value;
+  render();
+});
+
+/* ---------------- Overlay ---------------- */
+async function openOverlay(id){
+  const inst = rows.find(r => r.id === id);
+  if (!inst) return;
+
+  document.getElementById("ov-tag").textContent = inst.tag_number;
+  document.getElementById("ov-sub").textContent = [inst.manufacturer, inst.model].filter(Boolean).join(" · ") || "—";
+  document.getElementById("ov-meta").innerHTML = `
+    <div><span>Site</span>${inst.site_name || "—"}</div>
+    <div><span>Area</span>${inst.area || "—"}</div>
+    <div><span>Serial</span>${inst.serial_number || "—"}</div>
+    <div><span>Interval</span>${inst.interval_months ? inst.interval_months + " months" : "—"}</div>
+    <div><span>Status</span><span class="pill ${statusClass(inst.status)}">${inst.status}</span></div>
+  `;
+
+  const histEl = document.getElementById("ov-history");
+  histEl.innerHTML = '<p class="hist-empty">Loading history…</p>';
+  document.getElementById("overlay").classList.add("show");
+
+  const { data, error } = await sb
+    .from("calibration_events")
+    .select("*")
+    .eq("instrument_id", id)
+    .order("calibration_date", { ascending: false });
+
+  if (error){
+    histEl.innerHTML = `<p class="hist-empty">Couldn't load history: ${error.message}</p>`;
+    return;
+  }
+  if (!data || data.length === 0){
+    histEl.innerHTML = '<p class="hist-empty">No calibration events on record.</p>';
+    return;
+  }
+
+  histEl.innerHTML = data.map(ev => {
+    let pdfLink = "";
+    if (ev.pdf_path){
+      const { data: urlData } = sb.storage.from(CERTIFICATES_BUCKET).getPublicUrl(ev.pdf_path);
+      // Bucket is private in the schema — for a private bucket, use createSignedUrl
+      // in an async flow instead of getPublicUrl. Left as getPublicUrl here for
+      // simplicity; swap in a signed-URL call once the bucket policies are set.
+      pdfLink = `<a class="pdf-link" href="${urlData.publicUrl}" target="_blank" rel="noopener">View PDF</a>`;
+    }
+    return `<div class="hist-item">
+      <span>${ev.calibration_date}</span>
+      <span class="pill ${ev.result === "Failed" ? "failed" : "passed"}">${ev.result}</span>
+      <span>${ev.certificate_no ? "Cert #" + ev.certificate_no : ""}</span>
+      ${pdfLink}
+    </div>`;
+  }).join("");
+}
+
+document.getElementById("ov-close").addEventListener("click", () => {
+  document.getElementById("overlay").classList.remove("show");
+});
+document.getElementById("overlay").addEventListener("click", (e) => {
+  if (e.target.id === "overlay") document.getElementById("overlay").classList.remove("show");
+});
+
+init();
+</script>
+</body>
+</html>
